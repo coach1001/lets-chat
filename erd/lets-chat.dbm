@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+CAUTION: Do not modify this file unless you know what you are doing.
+         Unexpected results may occur if the code is changed deliberately.
+-->
+<dbmodel pgmodeler-ver="0.9.1" last-position="0,0" last-zoom="1"
+	 default-owner="postgres">
+<role name="verified_user">
+</role>
+
+<role name="authenticator">
+	<appended-sql><![CDATA[ALTER ROLE authenticator WITH NOINHERIT;]]></appended-sql>
+</role>
+
+<role name="anonymous">
+</role>
+
+<database name="db_7f2092e9895f" is-template="false" allow-conns="true" append-at-eod="true">
+</database>
+
+<schema name="public" fill-color="#e1e1e1" sql-disabled="true">
+</schema>
+
+<schema name="authentication" rect-visible="true" fill-color="#e1e1e1">
+	<role name="postgres"/>
+</schema>
+
+<extension name="pgcrypto">
+	<schema name="authentication"/>
+</extension>
+
+<table name="basic_users">
+	<schema name="authentication"/>
+	<role name="postgres"/>
+	<position x="20" y="20"/>
+	<column name="id" not-null="true" default-value="gen_random_uuid()">
+		<type name="uuid" length="0"/>
+	</column>
+	<column name="email_address" not-null="true">
+		<type name="text" length="0"/>
+	</column>
+	<column name="password" not-null="true">
+		<type name="text" length="0"/>
+	</column>
+	<column name="active" not-null="true" default-value="true">
+		<type name="boolean" length="0"/>
+	</column>
+	<column name="verified" not-null="true" default-value="false">
+		<type name="boolean" length="0"/>
+	</column>
+	<column name="user_role" not-null="true" default-value="'anonymous'">
+		<type name="text" length="0"/>
+	</column>
+	<constraint name="pk_basic_users" type="pk-constr" table="authentication.basic_users">
+		<columns names="id" ref-type="src-columns"/>
+	</constraint>
+	<constraint name="uq_basic_users_email_address" type="uq-constr" table="authentication.basic_users">
+		<columns names="email_address" ref-type="src-columns"/>
+	</constraint>
+	<constraint name="ck_basic_users_email_address" type="ck-constr" table="authentication.basic_users">
+			<expression><![CDATA[email_address ~* '^.+@.+\..+$' ]]></expression>
+	</constraint>
+</table>
+
+<function name="fn_encrypt_basic_user_password"
+		window-func="false"
+		returns-setof="false"
+		behavior-type="RETURNS NULL ON NULL INPUT"
+		function-type="VOLATILE"
+		security-type="SECURITY INVOKER"
+		execution-cost="1"
+		row-amount="0">
+	<schema name="authentication"/>
+	<role name="postgres"/>
+	<language name="plpgsql" sql-disabled="true"/>
+	<return-type>
+	<type name="trigger" length="0"/>
+	</return-type>
+	<definition><![CDATA[BEGIN
+	SET search_path TO authentication, public;
+ 	IF TG_OP = 'INSERT' OR NEW.password <> OLD.password THEN
+    	NEW.password = crypt(NEW.password, gen_salt('bf'));
+		NEW.user_role = 'anonymous';
+   	END IF;
+  RETURN NEW;
+END]]></definition>
+</function>
+
+<trigger name="tg_encrypt_password" firing-type="BEFORE" per-line="true" constraint="false"
+	 ins-event="true" del-event="false" upd-event="true" trunc-event="false"
+	 table="authentication.basic_users">
+		<function signature="authentication.fn_encrypt_basic_user_password()"/>
+</trigger>
+
+<usertype name="TOKEN_ENUM" configuration="enumeration">
+	<schema name="authentication"/>
+	<role name="postgres"/>
+	<enumeration values="VALIDATE_EMAIL,RESET_PASSWORD,DEACTIVATE_USER"/>
+</usertype>
+
+<table name="basic_tokens">
+	<schema name="authentication"/>
+	<role name="postgres"/>
+	<position x="620" y="220"/>
+	<column name="id" not-null="true" default-value="gen_random_uuid()">
+		<type name="uuid" length="0"/>
+	</column>
+	<column name="user_id" not-null="true">
+		<type name="uuid" length="0"/>
+	</column>
+	<column name="ttype" not-null="true">
+		<type name="authentication.&quot;TOKEN_ENUM&quot;" length="0"/>
+	</column>
+	<column name="redeemed" not-null="true" default-value="false">
+		<type name="boolean" length="0"/>
+	</column>
+	<column name="expires_at" not-null="true" default-value="CURRENT_TIMESTAMP + INTERVAL '1 day'">
+		<type name="timestamp with time zone" length="0" with-timezone="true"/>
+	</column>
+	<constraint name="pk_basic_token" type="pk-constr" table="authentication.basic_tokens">
+		<columns names="id" ref-type="src-columns"/>
+	</constraint>
+</table>
+
+<function name="fn_create_basic_user_validate_email_token"
+		window-func="false"
+		returns-setof="false"
+		behavior-type="CALLED ON NULL INPUT"
+		function-type="VOLATILE"
+		security-type="SECURITY INVOKER"
+		execution-cost="1"
+		row-amount="0">
+	<schema name="authentication"/>
+	<role name="postgres"/>
+	<language name="plpgsql" sql-disabled="true"/>
+	<return-type>
+	<type name="trigger" length="0"/>
+	</return-type>
+	<definition><![CDATA[BEGIN
+ 	IF TG_OP = 'INSERT' THEN
+		INSERT INTO basic_tokens (user_id, ttype)
+		VALUES (NEW.id, 'VALIDATE_EMAIL');
+		/*SEND EMAIL VIA PG-NOTIFY*/
+   	END IF;
+  RETURN NEW;
+END]]></definition>
+</function>
+
+<trigger name="tg_create_basic_user_validate_email_token" firing-type="AFTER" per-line="true" constraint="false"
+	 ins-event="true" del-event="false" upd-event="false" trunc-event="false"
+	 table="authentication.basic_users">
+		<function signature="authentication.fn_create_basic_user_validate_email_token()"/>
+</trigger>
+
+<function name="fn_verify_basic_user_on_validate_email_token_redeem"
+		window-func="false"
+		returns-setof="false"
+		behavior-type="CALLED ON NULL INPUT"
+		function-type="VOLATILE"
+		security-type="SECURITY INVOKER"
+		execution-cost="1"
+		row-amount="0">
+	<schema name="authentication"/>
+	<role name="postgres"/>
+	<language name="plpgsql" sql-disabled="true"/>
+	<return-type>
+	<type name="trigger" length="0"/>
+	</return-type>
+	<definition><![CDATA[BEGIN
+	SET search_path TO authentication, public;
+ 	IF TG_OP = 'UPDATE' AND NEW.ttype = 'VALIDATE_EMAIL' AND NEW.redeemed = TRUE THEN
+		UPDATE basic_users SET (verified, user_role) = (TRUE, 'verified_user')
+		WHERE NEW.user_id = basic_users.id;
+		/*SEND EMAIL VIA PG-NOTIFY*/
+   	END IF;
+  RETURN NEW;
+END]]></definition>
+</function>
+
+<trigger name="tg_verify_basic_user_on_validate_email_token_redeem" firing-type="AFTER" per-line="true" constraint="false"
+	 ins-event="false" del-event="false" upd-event="true" trunc-event="false"
+	 table="authentication.basic_tokens">
+		<function signature="authentication.fn_verify_basic_user_on_validate_email_token_redeem()"/>
+</trigger>
+
+<constraint name="fk_token_has_basic_user" type="fk-constr" comparison-type="MATCH FULL"
+	 upd-action="NO ACTION" del-action="NO ACTION" ref-table="authentication.basic_users" table="authentication.basic_tokens">
+	<columns names="user_id" ref-type="src-columns"/>
+	<columns names="id" ref-type="dst-columns"/>
+</constraint>
+
+<relationship name="rel_basic_tokens_basic_users" type="relfk"
+	 src-table="authentication.basic_tokens"
+	 dst-table="authentication.basic_users" reference-fk="fk_token_has_basic_user"
+	 src-required="false" dst-required="false"/>
+
+<permission>
+	<object name="authentication.basic_users" type="table"/>
+	<roles names="anonymous"/>
+	<privileges insert="true" update="true"/>
+</permission>
+<permission>
+	<object name="authentication.fn_create_basic_user_validate_email_token()" type="function"/>
+	<roles names="anonymous"/>
+	<privileges execute="true"/>
+</permission>
+<permission>
+	<object name="authentication.fn_encrypt_basic_user_password()" type="function"/>
+	<roles names="anonymous"/>
+	<privileges execute="true"/>
+</permission>
+<permission>
+	<object name="authentication.fn_verify_basic_user_on_validate_email_token_redeem()" type="function"/>
+	<roles names="anonymous"/>
+	<privileges execute="true"/>
+</permission>
+<permission>
+	<object name="authentication.basic_tokens" type="table"/>
+	<roles names="anonymous"/>
+	<privileges insert="true" update="true"/>
+</permission>
+</dbmodel>
